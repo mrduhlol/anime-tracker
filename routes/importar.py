@@ -1,7 +1,7 @@
 """
 routes/importar.py — Import / Export: detección de texto pegado, importación en lote,
-XML de MyAnimeList, importación de AniList por usuario y exportación
-JSON/CSV.
+XML de MyAnimeList, importación de AniList por usuario, exportación
+JSON/CSV y exportación de mutaciones AniList (replay manual).
 
 Extraído de main.py. OJO: SCRAPERS/_sync_bg/
 _get_sheets_config/_import_from_anilist viven en main (los tests los
@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
+import anilist_export
 import database as db
 import main  # circular a propósito: nombres de main se leen al servir
 import sheets_sync
@@ -242,6 +243,48 @@ async def export_csv():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=anime_tracker.csv"},
     )
+
+# ── Exportar mutaciones AniList (replay manual, OFFLINE) ──────────────────────
+# La sincronización completa (Simkl/AniList 2-way) necesitaría credenciales
+# OAuth que el upstream no distribuye; el intercambio honesto es exportar las
+# mutaciones SaveMediaListEntry y que el usuario las repita con SU token.
+
+@router.post("/api/export/anilist")
+async def export_anilist(data: dict | None = None):
+    """Compone las mutaciones `SaveMediaListEntry` de AniList para todos los
+    animes con anilist_id. OFFLINE: aquí no se envía nada — el cuerpo con
+    {"query": ..., "variables": ...} lo debe replayar el usuario contra
+    graphql.anilist.co con su propio token (ver anilist_export.py).
+
+    Cada mutación lleva la plantilla GraphQL completa POR ÍTEM (decisión
+    documentada en anilist_export.py): copiar el dict = copiar el POST listo.
+    400 cuando NINGÚN anime tiene anilist_id (o la biblioteca está vacía).
+
+    userId: por defecto se lee de config (anilist_userid, lo guarda el OAuth
+    de anilist_sync) en TIEMPO DE PETICIÓN; el body opcional permite forzarlo
+    ({"user_id": <Viewer.id de AniList>}) sin conexión OAuth. No hay nombres
+    de main en el camino.
+    """
+    try:
+        user_id = int(db.get_config("anilist_userid") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    if data and data.get("user_id"):
+        try:
+            user_id = int(data["user_id"])
+        except (TypeError, ValueError):
+            raise HTTPException(
+                400,
+                detail="user_id debe ser un entero (Viewer.id de AniList)",
+            )
+    mutaciones = anilist_export.build_mutation(db.listar_animes(), user_id)
+    if not mutaciones:
+        raise HTTPException(
+            400,
+            detail="Ningún anime tiene anilist_id: conecta la cuenta o importa "
+                   "desde AniList antes de exportar mutaciones.",
+        )
+    return {"mutaciones": mutaciones, "count": len(mutaciones)}
 
 @router.get("/api/media/export/json")
 async def export_media_json():

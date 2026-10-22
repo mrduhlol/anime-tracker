@@ -107,6 +107,7 @@ _RUTAS_PINADAS = {
     ("/api/continuar", "GET"),
     ("/api/discord", "GET"),
     ("/api/discord", "POST"),
+    ("/api/export/anilist", "POST"),
     ("/api/export/csv", "GET"),
     ("/api/export/json", "GET"),
     ("/api/export/share", "GET"),
